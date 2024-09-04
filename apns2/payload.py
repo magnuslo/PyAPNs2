@@ -1,6 +1,8 @@
-from typing import Any, Dict, List, Optional, Union, Iterable
+from typing import Any, Dict, List, Optional, Union, Iterable, Literal
 
 MAX_PAYLOAD_SIZE = 4096
+
+InterruptionLevelType = Literal['active', 'passive', 'time-sensitive', 'critical']
 
 
 class PayloadAlert(object):
@@ -79,6 +81,7 @@ class Payload(object):
             thread_id: Optional[str] = None,
             content_available: bool = False,
             mutable_content: bool = False,
+            interruption_level: Union[InterruptionLevelType, None] = None,
     ) -> None:
         self.alert = alert
         self.badge = badge
@@ -89,6 +92,18 @@ class Payload(object):
         self.custom = custom
         self.mutable_content = mutable_content
         self.thread_id = thread_id
+        self.interruption_level = interruption_level
+
+    @property
+    def interruption_level(self):
+        return self._interruption_level
+
+    @interruption_level.setter
+    def interruption_level(self, value):
+        if value and value not in InterruptionLevelType.__args__:
+            raise Exception("-interruption_level- it must be at least a value of InterruptionLevelType or None: For further visit https://developer.apple.com/documentation/usernotifications/unnotificationinterruptionlevel. Valid values are: {} ".format(list(InterruptionLevelType.__args__)))
+        self._interruption_level = value
+
 
     def dict(self) -> Dict[str, Any]:
         result = {
@@ -114,6 +129,8 @@ class Payload(object):
             result['aps']['category'] = self.category
         if self.url_args is not None:
             result['aps']['url-args'] = self.url_args
+        if self.interruption_level is not None:
+            result['aps']['interruption-level'] = self.interruption_level
         if self.custom is not None:
             result.update(self.custom)
 

@@ -60,9 +60,17 @@ def test_payload():
 
 def test_payload_with_payload_alert(payload_alert):
     payload = Payload(
-        alert=payload_alert, badge=2, sound='chime',
-        content_available=True, mutable_content=True,
-        category='my_category', url_args='args', custom={'extra': 'something'}, thread_id='42')
+        alert=payload_alert,
+        badge=2,
+        sound="chime",
+        content_available=True,
+        mutable_content=True,
+        category="my_category",
+        url_args="args",
+        custom={"extra": "something"},
+        thread_id="42",
+        interruption_level=None,
+    )
     assert payload.dict() == {
         'aps': {
             'alert': {
@@ -89,3 +97,38 @@ def test_payload_with_payload_alert(payload_alert):
         },
         'extra': 'something'
     }
+
+
+@pytest.mark.parametrize("input_value", ["inactive", "invalid", "default"])
+def test_payload_alert_with_an_unvalid_interruption_level_value(payload_alert, input_value):
+    with pytest.raises(Exception):
+        Payload(
+            alert=payload_alert,
+            badge=2,
+            sound="chime",
+            content_available=True,
+            mutable_content=True,
+            category="my_category",
+            url_args="args",
+            custom={"extra": "something"},
+            thread_id="42",
+            interruption_level=input_value,
+        )
+   
+@pytest.mark.parametrize("input_value", ["active", "passive", "time-sensitive", "critical"])
+def test_payload_alert_with_a_valid_interruption_level_value(payload_alert, input_value):
+    payload = Payload(
+            alert=payload_alert,
+            badge=2,
+            sound="chime",
+            content_available=True,
+            mutable_content=True,
+            category="my_category",
+            url_args="args",
+            custom={"extra": "something"},
+            thread_id="42",
+            interruption_level=input_value,
+        )
+    _payload = payload.dict()
+    assert "interruption-level" in _payload["aps"]
+    assert _payload["aps"]["interruption-level"] == input_value
