@@ -24,14 +24,14 @@ class Credentials(object):
     # Creates a connection with the credentials, if available or necessary.
     def create_connection(self, server: str, port: int, proto: Optional[str], proxy_host: Optional[str] = None,
                           proxy_port: Optional[int] = None) -> httpx.Client:
-        proxies = None
+        proxy = None
         if proxy_host and proxy_port:
-            proxies = f"http://{proxy_host}:{proxy_port}"
+            proxy = f"http://{proxy_host}:{proxy_port}"
 
         return httpx.Client(
             http2=True,
             verify=self.__ssl_context if self.__ssl_context else True,
-            proxies=proxies
+            proxy=proxy
         )
 
     def get_authorization_header(self, topic: Optional[str]) -> Optional[str]:
