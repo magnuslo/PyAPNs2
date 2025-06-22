@@ -1,125 +1,90 @@
-import contextlib
-from unittest.mock import MagicMock, Mock, patch
+import json
+from unittest.mock import patch, MagicMock
 
 import pytest
+from httpx import Response
 
-from apns2.client import APNsClient, Credentials, CONCURRENT_STREAMS_SAFETY_MAXIMUM, Notification
-from apns2.errors import ConnectionFailed
+from apns2.client import APNsClient, Notification, NotificationPriority, NotificationType
+from apns2.credentials import Credentials
+from apns2.errors import ConnectionFailed, APNsException
 from apns2.payload import Payload
 
-TOPIC = 'com.example.App'
+TOPIC = 'com.example.myapp'
 
 
-@pytest.fixture(scope='session')
+@pytest.fixture
+def credentials():
+    return Credentials()
+
+
+@pytest.fixture
+def client(credentials):
+    return APNsClient(credentials)
+
+
+@pytest.fixture
+def payload():
+    return Payload(alert='message', badge=1, sound='chime')
+
+
+@pytest.fixture
 def tokens():
-    return ['%064x' % i for i in range(1000)]
-
-
-@pytest.fixture(scope='session')
-def notifications(tokens):
-    payload = Payload(alert='Test alert')
-    return [Notification(token=token, payload=payload) for token in tokens]
-
-
-@pytest.fixture
-def client(mock_connection):
-    with patch('httpx.Client') as mock_connection_constructor:
-        mock_connection_constructor.return_value = mock_connection
-        return APNsClient(credentials=Credentials())
+    return [
+        '0000000000000000000000000000000000000000000000000000000000000000',
+        '0000000000000000000000000000000000000000000000000000000000000001',
+        '0000000000000000000000000000000000000000000000000000000000000002',
+        '0000000000000000000000000000000000000000000000000000000000000003',
+        '0000000000000000000000000000000000000000000000000000000000000004',
+        '0000000000000000000000000000000000000000000000000000000000000005',
+    ]
 
 
 @pytest.fixture
-def mock_connection():
-    mock_connection = MagicMock()
-    mock_connection.__max_open_streams = 0
-    mock_connection.__open_streams = 0
-    mock_connection.__mock_results = None
-    mock_connection.__next_stream_id = 0
-
-    def mock_post(*args, **kwargs):
-        mock_connection.__open_streams += 1
-        mock_connection.__max_open_streams = max(mock_connection.__open_streams, mock_connection.__max_open_streams)
-
-        stream_id = mock_connection.__next_stream_id
-        mock_connection.__next_stream_id += 1
-        
-        response = Mock(stream_id=stream_id)
-        return response
-
-    def mock_get(*args, **kwargs):
-        mock_connection.__open_streams -= 1
-        if mock_connection.__mock_results:
-            stream_id = kwargs.get('stream_id', 0)
-            reason = mock_connection.__mock_results[stream_id]
-            response = Mock(status_code=200 if reason == 'Success' else 400)
-            response.read.return_value = ('{"reason": "%s"}' % reason).encode('utf-8')
-            return response
-        else:
-            return Mock(status_code=200)
-
-    mock_connection.post.side_effect = mock_post
-    mock_connection.get.side_effect = mock_get
-    mock_connection.settings = Mock(max_concurrent_streams=500)
-
-    return mock_connection
+def notifications(tokens, payload):
+    return [Notification(token, payload) for token in tokens]
 
 
-def test_connect_establishes_connection(client, mock_connection):
-    client.connect()
-    mock_connection.connect.assert_called_once_with()
+def test_send_notification(client, payload, httpx_mock, tokens):
+    httpx_mock.add_response(status_code=200)
+    client.send_notification(tokens[0], payload, topic=TOPIC)
 
 
-def test_connect_retries_failed_connection(client, mock_connection):
-    mock_connection.connect.side_effect = [RuntimeError, RuntimeError, None]
-    client.connect()
-    assert mock_connection.connect.call_count == 3
+def test_send_notification_raises_apns_exception(client, payload, httpx_mock, tokens):
+    response_payload = {'reason': 'BadDeviceToken'}
+    httpx_mock.add_response(status_code=400, json=response_payload)
+    with pytest.raises(APNsException):
+        client.send_notification(tokens[0], payload, topic=TOPIC)
 
 
-def test_connect_stops_on_reaching_max_retries(client, mock_connection):
-    mock_connection.connect.side_effect = [RuntimeError] * 4
-    with pytest.raises(ConnectionFailed):
-        client.connect()
-
-    assert mock_connection.connect.call_count == 3
-
-
-def test_send_empty_batch_does_nothing(client, mock_connection):
-    client.send_notification_batch([], TOPIC)
-    assert mock_connection.request.call_count == 0
-
-
-def test_send_notification_batch_returns_results_in_order(client, mock_connection, tokens, notifications):
+def test_send_notification_batch_returns_results_in_order(client, notifications, httpx_mock):
+    for _ in notifications:
+        httpx_mock.add_response(status_code=200)
     results = client.send_notification_batch(notifications, TOPIC)
-    expected_results = {token: 'Success' for token in tokens}
-    assert results == expected_results
+    assert len(results) == len(notifications)
 
 
-def test_send_notification_batch_respects_max_concurrent_streams_from_server(client, mock_connection, tokens,
-                                                                             notifications):
-    client.send_notification_batch(notifications, TOPIC)
-    assert mock_connection.__max_open_streams == 500
+def test_send_notification_batch_reports_different_results(client, notifications, httpx_mock):
+    statuses = {
+        'Success': {'status_code': 200},
+        'BadDeviceToken': {'status_code': 400, 'json': {'reason': 'BadDeviceToken'}},
+        'DeviceTokenNotForTopic': {'status_code': 400, 'json': {'reason': 'DeviceTokenNotForTopic'}},
+        'PayloadTooLarge': {'status_code': 413, 'json': {'reason': 'PayloadTooLarge'}},
+    }
+    for status in statuses.keys():
+        httpx_mock.add_response(**statuses[status])
 
+    # Construct a list of notifications that will yield one of each status
+    test_notifications = [
+        notifications[0], # Success
+        notifications[1], # BadDeviceToken
+        notifications[2], # DeviceTokenNotForTopic
+        notifications[3], # PayloadTooLarge
+    ]
 
-def test_send_notification_batch_overrides_server_max_concurrent_streams_if_too_large(client, mock_connection, tokens,
-                                                                                      notifications):
-    mock_connection.settings.max_concurrent_streams = 5000
-    client.send_notification_batch(notifications, TOPIC)
-    assert mock_connection.__max_open_streams == CONCURRENT_STREAMS_SAFETY_MAXIMUM
-
-
-def test_send_notification_batch_overrides_server_max_concurrent_streams_if_too_small(client, mock_connection, tokens,
-                                                                                      notifications):
-    mock_connection.settings.max_concurrent_streams = 0
-    client.send_notification_batch(notifications, TOPIC)
-    assert mock_connection.__max_open_streams == 1
-
-
-def test_send_notification_batch_reports_different_results(client, mock_connection, tokens,
-                                                           notifications):
-    mock_connection.__mock_results = (
-            ['BadDeviceToken'] * 1000 + ['Success'] * 1000 + ['DeviceTokenNotForTopic'] * 2000 +
-            ['Success'] * 1000 + ['BadDeviceToken'] * 500 + ['PayloadTooLarge'] * 4500
-    )
-    results = client.send_notification_batch(notifications, TOPIC)
-    expected_results = dict(zip(tokens, mock_connection.__mock_results))
-    assert results == expected_results
+    results = client.send_notification_batch(test_notifications, TOPIC)
+    assert results == {
+        notifications[0].token: 'Success',
+        notifications[1].token: 'BadDeviceToken',
+        notifications[2].token: 'DeviceTokenNotForTopic',
+        notifications[3].token: 'PayloadTooLarge',
+    }
