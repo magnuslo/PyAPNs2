@@ -10,11 +10,12 @@ Python library for interacting with the Apple Push Notification service (APNs) v
 
 Either download the source from GitHub or use pip:
 
-    $ pip install apns2
+    pip install apns2
 
 ## Sample usage
 
 ```python
+import collections
 from apns2.client import APNsClient
 from apns2.payload import Payload
 
@@ -42,10 +43,10 @@ client.send_notification_batch(notifications=notifications, topic=topic)
 
 ## Requirements
 
-- Python 3.7 or later
-- httpx 0.24.0 or later
-- cryptography 1.7.2 or later
-- PyJWT 2.0.0 or later
+- Python 3.9 or later
+- httpx 0.28.1 or later (with http2 support)
+- cryptography 45.0.4 or later
+- PyJWT 2.10.1 or later
 
 ## Further Info
 
@@ -53,34 +54,26 @@ client.send_notification_batch(notifications=notifications, topic=topic)
 
 ## Contributing
 
-To develop PyAPNs2, check out the code and install dependencies. It's recommended to use a virtualenv to isolate dependencies:
+To develop PyAPNs2, check out the code and install dependencies using PDM:
+
 ```shell
 # Clone the source code.
 git clone https://github.com/Pr0Ger/PyAPNs2.git
 cd PyAPNs2
 # Create a virtualenv and install dependencies.
-virtualenv venv
-. venv/bin/activate
-pip install -e .[tests]
+pdm install
 ```
 
 To run the tests:
-```shell
-pytest
-```
 
-You can use `tox` for running tests with all supported Python versions:
 ```shell
-pyenv install 3.5.6; pyenv install 3.6.7; pyenv install 3.7.1; pyenv install 3.8.0
-pyenv local 3.8.0 3.7.1 3.6.7 3.5.6
-pip install tox
-tox
+pdm run pytest
 ```
 
 To run the linter:
+
 ```shell
-pip install pylint
-pylint --reports=n apns2 test
+pdm run pylint --reports=n apns2 test
 ```
 
 ## License
